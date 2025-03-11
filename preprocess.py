@@ -38,6 +38,16 @@ filenames = [
     ("white_baseline_222_rot.png", 1272, 1383, 912, 984, "v"),
 ]
 
+filenames = [
+    ("r_-22deg_8888.png", 831, 915, 1176, 1317, 'h'),
+    ("r_-22deg_8888.png", 702, 828, 1314, 1383, 'v'),
+    ("r_0deg_2222.png", 774, 855, 969, 1113, 'h'),
+    ("r_0deg_2222.png", 612, 768, 1104, 1191, 'v'),
+    ("r_+22deg_4444.png", 776, 872, 1020, 1176, 'h'),
+    ("r_+22deg_4444.png", 648, 768, 1172, 1264, 'v'),
+]
+
+
 for f in filenames:
     img = cv2.imread(f[0], cv2.IMREAD_GRAYSCALE)
     print(img.shape)
