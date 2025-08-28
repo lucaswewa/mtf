@@ -46,8 +46,16 @@ class PosVidConverter:
         return targetPos/1000
 
 
+import numpy as np
+
 converter = PosVidConverter()
-print(converter.pos2vid(1.7))
-print(converter.pos2vid(1.75))
-print(converter.pos2vid(1.9))
+print(converter.pos2vid(1.4))
+diff0 = np.array([10, 60, 110, 70])
+diff1 = np.array([converter.pos2vid(1.4+d0/1000)-converter.pos2vid(1.4) for d0 in diff0])
+print(diff0, diff0.mean())
+print(diff1, diff1.mean())
+
+print()
+print(-0.1, converter.pos2vid(1.3)-converter.pos2vid(1.4))
+print(-0.2, converter.pos2vid(1.2)-converter.pos2vid(1.4))
 
