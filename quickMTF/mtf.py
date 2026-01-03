@@ -2,7 +2,101 @@ import numpy as np
 import numpy.typing as npt
 import scipy.signal
 import matplotlib.pyplot as plt
+from enum import Enum
+from dataclasses import dataclass
 
+@dataclass
+class cSet:
+    x: np.ndarray
+    y: np.ndarray
+
+@dataclass
+class cESF:
+    raw_esf: cSet
+    interp_esf: cSet
+    threshold: float
+    width: float
+    angle: float
+    edge_poly: np.ndarray
+
+@dataclass
+class cMTF:
+    x: np.ndarray
+    y: np.ndarray
+    mtf_at_nyquist: float
+    width: float
+
+supersampling = 4
+show_plots = 5
+mtf_index = 0.5
+sequence=0
+return_fig = False
+
+diff_kernel = np.array([0.5, 0.0, -0.5])
+diff_offset = 0.0
+diff_ft = 2  # factor used in the correction of the numerical derivation
+
+class SFR:
+    def __init__(self, image):
+        self.image = image
+
+    def get_esf(self):
+        # calculate centroids for the ROI
+        sample_diff = differentiate(self.image, diff_kernel)
+        sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x = centroid(sample_diff, verbose=True)
+        sample_centr = sample_centr + diff_offset
+
+        # calculate centroids for rotated ROI
+        image_rot90 = self.image.T[:, ::-1]  # rotate by transposing and mirroring
+        sample_diff_rot90 = differentiate(image_rot90, diff_kernel)
+        sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90 = centroid(sample_diff_rot90, verbose=True)
+        sample_centr_rot90 = sample_centr_rot90 + diff_offset
+
+        image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated = pick_valid_roi_rotation(self.image, sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x, image_rot90, sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90)
+
+        # find edge
+        pcoefs, slope, offset, angle, idx, patch_shape, centr = find_edge(centroid_for_mtf, image_for_mtf.shape, rotated, angle=None, verbose=True)
+
+        if abs(angle) < 0.9 : # ingore the less than 0.9 degree slant edge
+            print("angle is less than 0.9 degs")
+
+        quadratic_fit = False
+        pcoefs = [0.0, slope, offset] if not quadratic_fit else pcoefs
+
+        dist = calc_distance(image_for_mtf.shape, pcoefs, quadratic_fit=quadratic_fit)
+
+        esf = project_and_bin(image_for_mtf, dist, supersampling)  # edge spread function
+
+        lsf = differentiate(esf, diff_kernel)
+
+        hann_win, hann_width, idx2 = filter_window(lsf, supersampling)  # define window to be applied on LSF
+        if hann_width >350:  # sorting out no slant edge
+            print("wrong!")
+
+        mtf_result = calc_mtf(lsf, hann_win, idx2, supersampling, diff_ft)
+
+        original_roi_info = (sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x)
+        rotated_roi_info = (sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90)
+        centroid_info = (image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated)
+        edge_info = (pcoefs, slope, offset, angle, idx, patch_shape, centr)
+        dist_info = (dist)
+        esf_info = (esf)
+        lsf_info = (lsf)
+        window_info = (hann_win, hann_width, idx2)
+        mtf_info = (mtf_result)
+
+        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info, lsf_info, window_info, mtf_info
+
+
+    def get_lsf(self):
+        pass
+
+    def get_mtf(self):
+        pass
+
+    def calculate_mtf(self):
+
+        return self.get_esf()
 
 def angle_from_slope(slope: float) -> npt.NDArray[np.floating]:
     return np.rad2deg(np.arctan(slope))
@@ -457,6 +551,8 @@ def plot_edge_and_stats(image_for_mtf, pcoefs, slope, offset, angle, idx, patch_
     plt.colorbar(im)
     if rotated:
         # ax.plot(patch_shape[1] - centr[idx], patch_shape[0] - idx, '.k', label="centroids")
+        print(patch_shape[0])
+        print(idx)
         ax.plot(patch_shape[1] - np.polyval([slope, offset], idx), patch_shape[0] - idx, '-', label="linear fit")
         ax.plot(patch_shape[1] - np.polyval(pcoefs, idx), patch_shape[0] - idx, '--', label="quadratic fit")
         ax.set_xlim([0, patch_shape[1]])

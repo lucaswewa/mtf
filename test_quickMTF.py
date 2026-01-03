@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from quickMTF.sfr_mtf import sfr_mtfcal
+from quickMTF.mtf import sfr_mtfcal
 
 cal = sfr_mtfcal()
 
