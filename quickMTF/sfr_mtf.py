@@ -1,17 +1,18 @@
 import numpy as np
+import numpy.typing as npt
 import scipy.signal
 import matplotlib.pyplot as plt
 
 
-def angle_from_slope(slope):
+def angle_from_slope(slope: float) -> npt.NDArray[np.floating]:
     return np.rad2deg(np.arctan(slope))
 
-def slope_from_angle(angle):
+def slope_from_angle(angle: float) -> npt.NDArray[np.floating]:
     return np.tan(np.deg2rad(angle))
 
-def centroid(arr, conv_kernel=3, win_width=5):
+def centroid(arr, conv_kernel = 3, win_width = 5, verbose = False):
     height, width = arr.shape
-
+    
     win = np.zeros(arr.shape)
     for i in range(height):
         win_c = np.argmax(np.abs(np.convolve(arr[i, :], np.ones(conv_kernel), 'same')))
@@ -20,7 +21,12 @@ def centroid(arr, conv_kernel=3, win_width=5):
     sum_arr = np.sum(arr * win, axis=1)
     sum_arr_x = np.sum(arr * win * x, axis=1)
     with np.errstate(divide='ignore', invalid='ignore'):
-        return sum_arr_x / sum_arr  # divide-by-zero warnings are suppressed
+        centr = sum_arr_x / sum_arr
+
+    if verbose:
+        return centr, win, sum_arr, sum_arr_x
+    else:
+        return centr
 
 
 def differentiate(arr, kernel):
@@ -33,12 +39,7 @@ def differentiate(arr, kernel):
         out[0] = 0.0
     return out
 
-
 def find_edge(centr, patch_shape, rotated, angle=None, show_plots=False, verbose=False):
-        pcoefs, slope, offset,angle = find_edge_core(centr, patch_shape, rotated, angle, show_plots, verbose)
-        return pcoefs, slope, offset,angle
-
-def find_edge_core(centr, patch_shape, rotated, angle=None, show_plots=False, verbose=False):
 
     idx = np.where(np.isfinite(centr))[0][1:-1]
     if angle is None:
@@ -49,27 +50,7 @@ def find_edge_core(centr, patch_shape, rotated, angle=None, show_plots=False, ve
     pcoefs = np.polyfit(idx, centr[idx], 2)
     angle = angle_from_slope(slope)
 
-
-    if show_plots == 5:
-        verbose and print("showing plots!")
-        fig, ax = plt.subplots()
-        if rotated:
-            ax.plot(idx, patch_shape[1] - centr[idx], '.k', label="centroids")
-            ax.plot(idx, patch_shape[1] - np.polyval([slope, offset], idx), '-', label="linear fit")
-            ax.plot(idx, patch_shape[1] - np.polyval(pcoefs, idx), '--', label="quadratic fit")
-            ax.set_xlim([0, patch_shape[0]])
-            ax.set_ylim([0, patch_shape[1]])
-        else:
-            ax.plot(centr[idx], idx, '.k', label="centroids")
-            ax.plot(np.polyval([slope, offset], idx), idx, '-', label="linear fit")
-            ax.plot(np.polyval(pcoefs, idx), idx, '--', label="quadratic fit")
-            ax.set_xlim([0, patch_shape[1]])
-            ax.set_ylim([0, patch_shape[0]])
-        #ax.text("{angle}")
-        ax.set_aspect('equal', 'box')
-        ax.legend(loc='best')
-        ax.invert_yaxis()
-        #plt.show()
+    return pcoefs, slope, offset,angle, idx, patch_shape, centr
 
     return pcoefs, slope, offset,angle
 
@@ -232,6 +213,41 @@ def filter_window(lsf, oversampling, lsf_centering_kernel_sz=9,
         np.hanning(2 * hann_hw)[crop_l:2 * hann_hw + crop_r]
     return hann_win, 2 * hann_hw, [i1, i2]
 
+def invalid_value_num(arr):
+    nan_num = np.sum(np.isnan(arr))
+    inf_num = np.sum(np.isinf(arr))
+    return nan_num + inf_num
+    
+def pick_valid_roi_rotation(image, sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x, image_rot90, sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90):
+    if invalid_value_num(sample_centr_rot90) < invalid_value_num(sample_centr):
+        (image_for_mtf, 
+         diff_for_mtf, 
+         centroid_for_mtf, 
+         win_for_mtf, 
+         sum_arr_for_mtf, 
+         sum_arr_x_for_mtf) = (
+             image_rot90, 
+             sample_diff_rot90, 
+             sample_centr_rot90, 
+             sample_win, 
+             sample_sum_arr, 
+             sample_sum_arr_x)
+        rotated = True
+    else:
+        (image_for_mtf, 
+         diff_for_mtf, 
+         centroid_for_mtf, 
+         win_for_mtf, 
+         sum_arr_for_mtf, 
+         sum_arr_x_for_mtf) = (
+             image, 
+             sample_diff, 
+             sample_centr, 
+             sample_win, 
+             sample_sum_arr, 
+             sample_sum_arr_x)    
+        rotated = False
+    return image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated
 
 def calc_mtf(lsf, hann_win, idx, oversampling, diff_ft):
     # Calculate MTF using the LSF as input and use the supplied window function
@@ -356,3 +372,143 @@ def calc_sfr_core(image, oversampling=2, show_plots=0, offset=None, angle=None,
 
     return mtf, status
 
+def plot_centroid_and_stats(diff, centr, win, sum_arr, sum_arr_x):
+    print(centr.shape)
+
+    fig = plt.figure(figsize=(10, 5))
+
+    ax00 = fig.add_subplot(2, 3, 1)
+    ax00.set_title("row diff map")
+    im00 = ax00.imshow(diff, cmap="gray")
+    fig.colorbar(im00)
+
+    ax01 = fig.add_subplot(2, 3, 2, projection="3d")
+    X = np.arange(0, diff.shape[1])
+    Y = np.arange(0, diff.shape[0])
+    X, Y = np.meshgrid(X, Y)
+    Z = diff
+    surf = ax01.plot_surface(X, Y, Z,
+                           linewidth=0, antialiased=False)
+    ax01.set_title("row diff 3d map")
+
+    ax02 = fig.add_subplot(2, 3, 3)
+    ax02.set_title("row centroid positions")
+    ax02.plot(centr)
+
+    ax10 = fig.add_subplot(2, 3, 4)
+    im10 = ax10.imshow(win)
+    ax10.set_title("win map")
+    fig.colorbar(im10)
+
+    ax11 = fig.add_subplot(2, 3, 5)
+    ax11.plot(sum_arr)
+    ax11.set_title("sum array")
+
+    ax12 = fig.add_subplot(2, 3, 6)
+    ax12.plot(sum_arr_x)
+    ax12.set_title("sum array x")
+    
+    plt.tight_layout()
+    plt.show()
+
+def plot_dist_and_stats(dist):
+    fig = plt.figure(figsize=(10, 4))
+    
+    ax00 = fig.add_subplot(1, 2, 1, projection="3d")
+    X = np.arange(0, dist.shape[1])
+    Y = np.arange(0, dist.shape[0])
+    X, Y = np.meshgrid(X, Y)
+    Z = dist
+    surf = ax00.plot_surface(X, Y, Z,
+                           linewidth=0, antialiased=False)
+    ax00.set_title("row dist 3d map")
+    
+    ax01 = fig.add_subplot(1, 2, 2)
+    ax01.set_title("dist map")
+    im0 = ax01.imshow(dist, cmap="gray")
+    fig.colorbar(im0)
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_esf_and_stats(esf):
+    fig = plt.figure(figsize=(10,4))
+
+    ax = fig.add_subplot(1, 1, 1)
+    ax.plot(esf)
+    ax.set_title("ESF")
+    ax.grid()
+    plt.tight_layout()
+    plt.show()
+
+def plot_lsf_and_stats(lsf):
+    fig = plt.figure(figsize=(10,4))
+
+    ax = fig.add_subplot(1, 1, 1)
+    ax.plot(lsf)
+    ax.grid()
+    ax.set_title("LSF")
+    plt.tight_layout()
+    plt.show()
+
+def plot_edge_and_stats(image_for_mtf, pcoefs, slope, offset, angle, idx, patch_shape, centr, rotated):
+    fig, ax = plt.subplots()
+    im = ax.imshow(image_for_mtf)
+    plt.colorbar(im)
+    if rotated:
+        # ax.plot(patch_shape[1] - centr[idx], patch_shape[0] - idx, '.k', label="centroids")
+        ax.plot(patch_shape[1] - np.polyval([slope, offset], idx), patch_shape[0] - idx, '-', label="linear fit")
+        ax.plot(patch_shape[1] - np.polyval(pcoefs, idx), patch_shape[0] - idx, '--', label="quadratic fit")
+        ax.set_xlim([0, patch_shape[1]])
+        ax.set_ylim([0, patch_shape[0]])
+    else:
+        ax.plot(centr[idx], idx, '.k', label="centroids")
+        ax.plot(np.polyval([slope, offset], idx), idx, '-', label="linear fit")
+        ax.plot(np.polyval(pcoefs, idx), idx, '--', label="quadratic fit")
+        ax.set_xlim([0, patch_shape[1]])
+        ax.set_ylim([0, patch_shape[0]])
+    #ax.text("{angle}")
+    # ax.set_aspect('equal', 'box')
+    ax.legend(loc='best')
+    ax.invert_yaxis()
+
+def plot_filter_window_and_stats(hann_win):
+    fig = plt.figure(figsize=(10,4))
+
+    ax = fig.add_subplot(1, 1, 1)
+    ax.plot(hann_win)
+    ax.set_title("Hanning Window")
+    ax.grid()
+    plt.tight_layout()
+    plt.show()
+
+def plot_mtf_and_stats(mtf, esf, hann_win, hann_width, lsf, idx, supersampling):
+    i1, i2 = idx
+    nn = (i2 - i1) // 2
+    lsf_sign = np.sign(np.mean(lsf[i1:i2] * hann_win))
+    fig = plt.figure(figsize=(10,4))
+
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax1.plot(mtf[:,0], mtf[:,1])
+    ax1.grid()
+
+    f = np.arange(0.0, 1.0, 0.01)
+    mtf_sinc = np.abs(np.sinc(f))
+    ax1.plot(f, mtf_sinc, 'k-', label='sinc')
+    ax1.axes.set_ylim(0, 1.2)
+    ax1.axes.set_xlim(0, 1.2)
+    ax1.set_title("MTF")
+
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax2.plot(esf[i1:i2], 'b.-', label=f"ESF, s.s.={supersampling:2d}")
+    ax2.plot(lsf_sign * lsf[i1:i2], 'r.-', label=f"{'-' if lsf_sign < 0 else ''}LSF")
+    ax2.plot(hann_win * ax2.axes.get_ylim()[1] * 1.1, 'g.-', label=f"Hann Win, w={hann_width:d}")
+    ax2.set_xlim(0, 2 * nn)
+    # ax2 = ax.twinx()
+    # ax2.get_yaxis().set_visible(False)
+    ax2.grid()
+    ax2.legend(loc='upper left')
+    ax2.set_xlabel('Bin no.')
+    
+    plt.tight_layout()
+    plt.show()
