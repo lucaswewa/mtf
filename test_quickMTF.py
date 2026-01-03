@@ -6,7 +6,7 @@ from quickMTF.sfr_mtf import sfr_mtfcal
 cal = sfr_mtfcal()
 
 image = np.load(r"..\quickMTF\sample_vert_edge.npy")
-image = np.load(r"..\quickMTF\sample_hori_edge.npy")
+# image = np.load(r"..\quickMTF\sample_hori_edge.npy")
 
 oversampling = 6
 sample = image

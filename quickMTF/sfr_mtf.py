@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 class sfr_mtfcal:
     def __init__(self):
         pass
+
     def angle_from_slope(self,slope):
         return np.rad2deg(np.arctan(slope))
 
@@ -37,7 +38,11 @@ class sfr_mtfcal:
         return out
 
 
-    def find_edge(self,centr, patch_shape, rotated, angle=None, show_plots=False, verbose=False):
+    def find_edge(self, centr, patch_shape, rotated, angle=None, show_plots=False, verbose=False):
+            pcoefs, slope, offset,angle = self.find_edge_core(centr, patch_shape, rotated, angle, show_plots, verbose)
+            return pcoefs, slope, offset,angle
+    
+    def find_edge_core(self, centr, patch_shape, rotated, angle=None, show_plots=False, verbose=False):
 
         idx = np.where(np.isfinite(centr))[0][1:-1]
         if angle is None:
@@ -251,6 +256,14 @@ class sfr_mtfcal:
         return np.column_stack((f, mtf))
 
     def calc_sfr(self,image, oversampling=2, show_plots=0, offset=None, angle=None,
+                 difference_scheme='central', verbose=False, return_fig=False,
+                 quadratic_fit=False):
+        mtf, status = self.calc_sfr_core(image, oversampling, show_plots, offset, angle,
+                 difference_scheme, verbose, return_fig,
+                 quadratic_fit)
+        return mtf, status
+    
+    def calc_sfr_core(self,image, oversampling=2, show_plots=0, offset=None, angle=None,
                  difference_scheme='central', verbose=False, return_fig=False,
                  quadratic_fit=False):
         """"
