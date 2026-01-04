@@ -83,9 +83,27 @@ class SFR:
         esf_info = (esf)
         lsf_info = (lsf)
         window_info = (hann_win, hann_width, idx2)
-        mtf_info = (mtf_result)
 
-        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info, lsf_info, window_info, mtf_info
+        filtered_first_elements = mtf_result[:, 1]
+        absolute_diff = np.abs(filtered_first_elements - mtf_index)
+        closest_index = np.argmin(absolute_diff)
+        cp_filter = mtf_result[closest_index, 0]
+        filtered_first_elements = mtf_result[:, 0]
+        absolute_diff = np.abs(filtered_first_elements - 0.5)
+        closest_index = np.argmin(absolute_diff)
+        mtf_nyquist = mtf_result[closest_index, 1] * 100
+
+        mtf_info = (mtf_result, round(cp_filter, 2), round(angle, 2), round(mtf_nyquist, 2))
+
+        angle_cw = rotated * 90 - angle  # angle clockwise from vertical axis
+        status_info = {
+            "rotated": rotated,
+            "angle": angle_cw,
+            "offset": offset
+        }
+
+
+        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info, lsf_info, window_info, mtf_info, status_info
 
 
     def get_lsf(self):
