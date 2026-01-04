@@ -3,7 +3,7 @@ import numpy.typing as npt
 import scipy.signal
 import matplotlib.pyplot as plt
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 @dataclass
 class cSet:
@@ -26,36 +26,91 @@ class cMTF:
     mtf_at_nyquist: float
     width: float
 
-supersampling = 4
-show_plots = 5
-mtf_index = 0.5
-sequence=0
-return_fig = False
+@dataclass
+class cSFRSetttings:
+    super_sampling: int = 4
+    mtf_index: float = 0.5
+    diff_kernel: np.ndarray = field(default_factory=lambda: np.array([0.5, 0.0, -0.5]))
+    diff_offset: float = 0.0
+    diff_ft: int = 2  # factor used in the correction of the numerical derivation
+    sequence: int = 0
+    show_plots: int = 5
+    return_fig: bool = False
 
-diff_kernel = np.array([0.5, 0.0, -0.5])
-diff_offset = 0.0
-diff_ft = 2  # factor used in the correction of the numerical derivation
+
+@dataclass
+class ROI_Info:
+    diff: np.ndarray
+    centr: np.ndarray
+    win: np.ndarray
+    sum_arr: np.ndarray
+    sum_arr_x: np.ndarray
+
+@dataclass
+class Centroid_Info:
+    image_for_mtf: np.ndarray
+    diff: np.ndarray
+    centr: np.ndarray
+    win: np.ndarray
+    sum_arr: np.ndarray
+    sum_arr_x: np.ndarray
+    rotated: bool
+
+@dataclass
+class Edge_Info:
+    pcoefs: np.ndarray
+    slope: float
+    offset: float
+    angle: float
+    idx: list
+    patch_shape: list
+    centr: np.ndarray
+    dist: np.ndarray
+
+@dataclass
+class ESF_Info:
+    esf: np.ndarray
+    super_sampling: int
+
+@dataclass
+class Window_Info:
+    hann_win: np.ndarray
+    hann_width: int
+    idx2: list
+
+@dataclass
+class LSF_Info:
+    lsf: np.ndarray
+    window_info: Window_Info
+
+@dataclass
+class MTF_Info:
+    mtf_result: np.ndarray
+    cp_filter: np.ndarray
+    angle: float
+    mtf_nyquist: float
 
 class SFR:
     def __init__(self, image):
         self.image = image
+        self.sfr_settings = cSFRSetttings()
 
     def get_esf(self, image):
         # calculate centroids for the ROI
-        sample_diff = differentiate(image, diff_kernel)
-        sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x = centroid(sample_diff, verbose=True)
-        sample_centr = sample_centr + diff_offset
+        diff = differentiate(image, self.sfr_settings.diff_kernel)
+        centr, win, sum_arr, sum_arr_x = centroid(diff, verbose=True)
+        centr = centr + self.sfr_settings.diff_offset
 
         # calculate centroids for rotated ROI
         image_rot90 = image.T[:, ::-1]  # rotate by transposing and mirroring
-        sample_diff_rot90 = differentiate(image_rot90, diff_kernel)
-        sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90 = centroid(sample_diff_rot90, verbose=True)
-        sample_centr_rot90 = sample_centr_rot90 + diff_offset
+        diff_rot90 = differentiate(image_rot90, self.sfr_settings.diff_kernel)
+        centr_rot90, win_rot90, sum_arr_rot90, sum_arr_x_rot90 = centroid(diff_rot90, verbose=True)
+        centr_rot90 = centr_rot90 + self.sfr_settings.diff_offset
 
-        image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated = pick_valid_roi_rotation(image, sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x, image_rot90, sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90)
+        image_for_mtf, diff_for_mtf, centr_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated_for_mtf = pick_valid_roi_rotation(image, diff, centr, win, sum_arr, sum_arr_x, image_rot90, diff_rot90, centr_rot90, win_rot90, sum_arr_rot90, sum_arr_x_rot90)
 
         # find edge
-        pcoefs, slope, offset, angle, idx, patch_shape, centr = find_edge(centroid_for_mtf, image_for_mtf.shape, rotated, angle=None, verbose=True)
+        pcoefs, slope, offset, angle, idx, patch_shape, centr = find_edge(centr_for_mtf, image_for_mtf.shape, rotated_for_mtf, angle=None, verbose=True)
 
         if abs(angle) < 0.9 : # ingore the less than 0.9 degree slant edge
             print("angle is less than 0.9 degs")
@@ -66,35 +121,61 @@ class SFR:
         dist = calc_distance(image_for_mtf.shape, pcoefs, quadratic_fit=quadratic_fit)
 
 
-        esf = project_and_bin(image_for_mtf, dist, supersampling)  # edge spread function
+        esf = project_and_bin(image_for_mtf, dist, self.sfr_settings.super_sampling)  # edge spread function
 
-        original_roi_info = (sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x)
-        rotated_roi_info = (sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90)
-        centroid_info = (image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated)
-        edge_info = (pcoefs, slope, offset, angle, idx, patch_shape, centr)
-        dist_info = (dist)
-        esf_info = (esf)
+        original_roi_info = ROI_Info(
+            diff=diff, 
+            centr=centr, 
+            win=win, 
+            sum_arr=sum_arr, 
+            sum_arr_x=sum_arr_x)
+        rotated_roi_info = ROI_Info(
+            diff=diff_rot90, 
+            centr=centr_rot90, 
+            win=win_rot90, 
+            sum_arr=sum_arr_rot90, 
+            sum_arr_x=sum_arr_x_rot90)
+        centroid_info = Centroid_Info(
+            image_for_mtf=image_for_mtf, 
+            diff=diff_for_mtf, 
+            centr=centr_for_mtf, 
+            win=win_for_mtf, 
+            sum_arr=sum_arr_for_mtf, 
+            sum_arr_x=sum_arr_x_for_mtf, 
+            rotated=rotated_for_mtf)
+        edge_info = Edge_Info(
+            pcoefs=pcoefs, 
+            slope=slope, 
+            offset=offset, 
+            angle=angle, 
+            idx=idx, 
+            patch_shape=patch_shape, 
+            centr=centr, 
+            dist=dist)
+        # dist_info = (dist)
+        # esf_info = (esf, self.sfr_settings.super_sampling)
+        esf_info = ESF_Info(esf=esf, super_sampling=self.sfr_settings.super_sampling)
 
-        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info
+        return original_roi_info, rotated_roi_info, centroid_info, edge_info, esf_info
 
     def get_lsf(self, esf, diff_kernel):
         lsf = differentiate(esf, diff_kernel)
 
-        hann_win, hann_width, idx2 = filter_window(lsf, supersampling)  # define window to be applied on LSF
+        hann_win, hann_width, idx2 = filter_window(lsf, self.sfr_settings.super_sampling)  # define window to be applied on LSF
         if hann_width >350:  # sorting out no slant edge
             print("wrong!")
 
-        window_info = (hann_win, hann_width, idx2)
-        lsf_info = (lsf)
+        window_info = Window_Info(hann_win, hann_width, idx2)
+        lsf_info = LSF_Info(lsf=lsf, window_info=window_info)
 
-        return lsf_info, window_info
+        return lsf_info
 
     def get_mtf(self, lsf, hann_win, idx2, angle, rotated, offset):
-        mtf_result = calc_mtf(lsf, hann_win, idx2, supersampling, diff_ft)
+        mtf_result = calc_mtf(lsf, hann_win, idx2, self.sfr_settings.super_sampling, self.sfr_settings.diff_ft)
 
 
         filtered_first_elements = mtf_result[:, 1]
-        absolute_diff = np.abs(filtered_first_elements - mtf_index)
+        absolute_diff = np.abs(filtered_first_elements - self.sfr_settings.mtf_index)
         closest_index = np.argmin(absolute_diff)
         cp_filter = mtf_result[closest_index, 0]
         filtered_first_elements = mtf_result[:, 0]
@@ -102,7 +183,12 @@ class SFR:
         closest_index = np.argmin(absolute_diff)
         mtf_nyquist = mtf_result[closest_index, 1] * 100
 
-        mtf_info = (mtf_result, round(cp_filter, 2), round(angle, 2), round(mtf_nyquist, 2))
+        mtf_info = MTF_Info(
+            mtf_result=mtf_result, 
+            cp_filter=round(cp_filter, 2), 
+            angle=round(angle, 2), 
+            mtf_nyquist=round(mtf_nyquist, 2)
+            )
 
         angle_cw = rotated * 90 - angle  # angle clockwise from vertical axis
         status_info = {
@@ -115,23 +201,20 @@ class SFR:
 
     def calculate_mtf(self):
         # ESF
-        original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info = self.get_esf(self.image)
+        original_roi_info, rotated_roi_info, centroid_info, edge_info, esf_info = self.get_esf(self.image)
 
-        esf = esf_info
-        image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated = centroid_info
-        pcoefs, slope, offset, angle, idx, patch_shape, centr = edge_info
 
         # LSF
-        lsf_info, window_info = self.get_lsf(esf, diff_kernel)
+        lsf_info = self.get_lsf(esf_info.esf, self.sfr_settings.diff_kernel)
 
-        lsf = lsf_info
+        lsf = lsf_info.lsf
+        window_info = lsf_info.window_info
 
-        hann_win, hann_width, idx2 = window_info
 
         # MTF
-        mtf_info, status_info = self.get_mtf(lsf, hann_win, idx2, angle, rotated, offset)
+        mtf_info, status_info = self.get_mtf(lsf, window_info.hann_win, window_info.idx2, edge_info.angle, centroid_info.rotated, edge_info.offset)
 
-        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info, lsf_info, window_info, mtf_info, status_info
+        return original_roi_info, rotated_roi_info, centroid_info, edge_info, esf_info, lsf_info, mtf_info, status_info
 
 def angle_from_slope(slope: float) -> npt.NDArray[np.floating]:
     return np.rad2deg(np.arctan(slope))
@@ -338,36 +421,36 @@ def invalid_value_num(arr):
     inf_num = np.sum(np.isinf(arr))
     return nan_num + inf_num
     
-def pick_valid_roi_rotation(image, sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x, image_rot90, sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90):
-    if invalid_value_num(sample_centr_rot90) < invalid_value_num(sample_centr):
+def pick_valid_roi_rotation(image, diff, centr, win, sum_arr, sum_arr_x, image_rot90, diff_rot90, centr_rot90, win_rot90, sum_arr_rot90, sum_arr_x_rot90):
+    if invalid_value_num(centr_rot90) < invalid_value_num(centr):
         (image_for_mtf, 
-         diff_for_mtf, 
-         centroid_for_mtf, 
-         win_for_mtf, 
-         sum_arr_for_mtf, 
-         sum_arr_x_for_mtf) = (
+         diff, 
+         centr, 
+         win, 
+         sum_arr, 
+         sum_arr_x) = (
              image_rot90, 
-             sample_diff_rot90, 
-             sample_centr_rot90, 
-             sample_win, 
-             sample_sum_arr, 
-             sample_sum_arr_x)
+             diff_rot90, 
+             centr_rot90, 
+             win, 
+             sum_arr, 
+             sum_arr_x)
         rotated = True
     else:
         (image_for_mtf, 
-         diff_for_mtf, 
-         centroid_for_mtf, 
-         win_for_mtf, 
-         sum_arr_for_mtf, 
-         sum_arr_x_for_mtf) = (
+         diff, 
+         centr, 
+         win, 
+         sum_arr, 
+         sum_arr_x) = (
              image, 
-             sample_diff, 
-             sample_centr, 
-             sample_win, 
-             sample_sum_arr, 
-             sample_sum_arr_x)    
+             diff, 
+             centr, 
+             win, 
+             sum_arr, 
+             sum_arr_x)    
         rotated = False
-    return image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated
+    return image_for_mtf, diff, centr, win, sum_arr, sum_arr_x, rotated
 
 def calc_mtf(lsf, hann_win, idx, oversampling, diff_ft):
     # Calculate MTF using the LSF as input and use the supplied window function
@@ -412,13 +495,13 @@ def calc_sfr_core(image, oversampling=2, show_plots=0, offset=None, angle=None,
         diff_ft = 2
 
     # Calculate centroids for the edge transition of each row
-    sample_diff = differentiate(image, diff_kernel)
-    centr = centroid(sample_diff) + diff_offset
+    diff = differentiate(image, diff_kernel)
+    centr = centroid(diff) + diff_offset
 
     # Calculate centroids also for the 90° right rotated image
     image_rot90 = image.T[:, ::-1]  # rotate by transposing and mirroring
-    sample_diff = differentiate(image_rot90, diff_kernel)
-    centr_rot = centroid(sample_diff) + diff_offset
+    diff_rot90 = differentiate(image_rot90, diff_kernel)
+    centr_rot = centroid(diff_rot90) + diff_offset
 
     # Use rotated image if it results in fewer rows without edge transitions
     if np.sum(np.isnan(centr_rot)) < np.sum(np.isnan(centr)):
@@ -492,8 +575,20 @@ def calc_sfr_core(image, oversampling=2, show_plots=0, offset=None, angle=None,
 
     return mtf, status
 
-def plot_centroid_and_stats(diff, centr, win, sum_arr, sum_arr_x):
-    print(centr.shape)
+def plot_roi_image(image):
+    fig, ax = plt.subplots()
+    im = ax.imshow(image, cmap='gray')
+    fig.colorbar(im, ax=ax)
+    plt.title("ROI image")
+    plt.show()
+
+def plot_centroid_and_stats(roi_info: ROI_Info):
+
+    diff = roi_info.diff
+    centr = roi_info.centr
+    win = roi_info.win
+    sum_arr = roi_info.sum_arr
+    sum_arr_x = roi_info.sum_arr_x
 
     fig = plt.figure(figsize=(10, 5))
 
