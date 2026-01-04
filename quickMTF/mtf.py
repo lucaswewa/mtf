@@ -40,19 +40,19 @@ class SFR:
     def __init__(self, image):
         self.image = image
 
-    def get_esf(self):
+    def get_esf(self, image):
         # calculate centroids for the ROI
-        sample_diff = differentiate(self.image, diff_kernel)
+        sample_diff = differentiate(image, diff_kernel)
         sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x = centroid(sample_diff, verbose=True)
         sample_centr = sample_centr + diff_offset
 
         # calculate centroids for rotated ROI
-        image_rot90 = self.image.T[:, ::-1]  # rotate by transposing and mirroring
+        image_rot90 = image.T[:, ::-1]  # rotate by transposing and mirroring
         sample_diff_rot90 = differentiate(image_rot90, diff_kernel)
         sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90 = centroid(sample_diff_rot90, verbose=True)
         sample_centr_rot90 = sample_centr_rot90 + diff_offset
 
-        image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated = pick_valid_roi_rotation(self.image, sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x, image_rot90, sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90)
+        image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated = pick_valid_roi_rotation(image, sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x, image_rot90, sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90)
 
         # find edge
         pcoefs, slope, offset, angle, idx, patch_shape, centr = find_edge(centroid_for_mtf, image_for_mtf.shape, rotated, angle=None, verbose=True)
@@ -65,15 +65,8 @@ class SFR:
 
         dist = calc_distance(image_for_mtf.shape, pcoefs, quadratic_fit=quadratic_fit)
 
+
         esf = project_and_bin(image_for_mtf, dist, supersampling)  # edge spread function
-
-        lsf = differentiate(esf, diff_kernel)
-
-        hann_win, hann_width, idx2 = filter_window(lsf, supersampling)  # define window to be applied on LSF
-        if hann_width >350:  # sorting out no slant edge
-            print("wrong!")
-
-        mtf_result = calc_mtf(lsf, hann_win, idx2, supersampling, diff_ft)
 
         original_roi_info = (sample_diff, sample_centr, sample_win, sample_sum_arr, sample_sum_arr_x)
         rotated_roi_info = (sample_diff_rot90, sample_centr_rot90, sample_win_rot90, sample_sum_arr_rot90, sample_sum_arr_x_rot90)
@@ -81,8 +74,24 @@ class SFR:
         edge_info = (pcoefs, slope, offset, angle, idx, patch_shape, centr)
         dist_info = (dist)
         esf_info = (esf)
-        lsf_info = (lsf)
+
+        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info
+
+    def get_lsf(self, esf, diff_kernel):
+        lsf = differentiate(esf, diff_kernel)
+
+        hann_win, hann_width, idx2 = filter_window(lsf, supersampling)  # define window to be applied on LSF
+        if hann_width >350:  # sorting out no slant edge
+            print("wrong!")
+
         window_info = (hann_win, hann_width, idx2)
+        lsf_info = (lsf)
+
+        return lsf_info, window_info
+
+    def get_mtf(self, lsf, hann_win, idx2, angle, rotated, offset):
+        mtf_result = calc_mtf(lsf, hann_win, idx2, supersampling, diff_ft)
+
 
         filtered_first_elements = mtf_result[:, 1]
         absolute_diff = np.abs(filtered_first_elements - mtf_index)
@@ -102,19 +111,27 @@ class SFR:
             "offset": offset
         }
 
-
-        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info, lsf_info, window_info, mtf_info, status_info
-
-
-    def get_lsf(self):
-        pass
-
-    def get_mtf(self):
-        pass
+        return mtf_info, status_info
 
     def calculate_mtf(self):
+        # ESF
+        original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info = self.get_esf(self.image)
 
-        return self.get_esf()
+        esf = esf_info
+        image_for_mtf, diff_for_mtf, centroid_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated = centroid_info
+        pcoefs, slope, offset, angle, idx, patch_shape, centr = edge_info
+
+        # LSF
+        lsf_info, window_info = self.get_lsf(esf, diff_kernel)
+
+        lsf = lsf_info
+
+        hann_win, hann_width, idx2 = window_info
+
+        # MTF
+        mtf_info, status_info = self.get_mtf(lsf, hann_win, idx2, angle, rotated, offset)
+
+        return original_roi_info, rotated_roi_info, centroid_info, edge_info, dist_info, esf_info, lsf_info, window_info, mtf_info, status_info
 
 def angle_from_slope(slope: float) -> npt.NDArray[np.floating]:
     return np.rad2deg(np.arctan(slope))
@@ -139,7 +156,6 @@ def centroid(arr, conv_kernel = 3, win_width = 5, verbose = False):
         return centr, win, sum_arr, sum_arr_x
     else:
         return centr
-
 
 def differentiate(arr, kernel):
     if len(arr.shape) == 2:
@@ -166,7 +182,6 @@ def find_edge(centr, patch_shape, rotated, angle=None, show_plots=False, verbose
 
     return pcoefs, slope, offset,angle
 
-
 def midpoint_slope_and_curvature_from_polynomial(a, b, c, y0, y1):
     # Describe input 2nd degree polynomial f(y) = a*y**2 + b*y + c in
     # terms of midpoint, slope (at midpoint), and curvature (at midpoint)
@@ -178,7 +193,6 @@ def midpoint_slope_and_curvature_from_polynomial(a, b, c, y0, y1):
     curvature = 2 * a / (1 + slope ** 2) ** (3 / 2)
     return y_mid, x_mid, slope, curvature
 
-
 def polynomial_from_midpoint_slope_and_curvature(y_mid, x_mid, slope, curvature):
     # Calculate a 2nd degree polynomial x = f(y) = a*y**2 + b*y + c that passes
     # through the midpoint (x_mid, y_mid) with the given slope and curvature
@@ -186,7 +200,6 @@ def polynomial_from_midpoint_slope_and_curvature(y_mid, x_mid, slope, curvature)
     b = slope - 2 * a * y_mid
     c = x_mid - a * y_mid ** 2 - b * y_mid
     return [a, b, c]
-
 
 def cubic_solver(a, b, c, d):
     # Solve the equation a*x**3 + b*x**2 + c*x + d = 0 for a
@@ -202,10 +215,8 @@ def cubic_solver(a, b, c, d):
     x = t - b / (3 * a)
     return x
 
-
 def dot(a, b):
     return a[0] * b[0] + a[1] * b[1]
-
 
 def calc_distance(data_shape, p, quadratic_fit=False, verbose=False):
     # Calculate the distance (with sign) from each point (x, y) in the
@@ -244,7 +255,6 @@ def calc_distance(data_shape, p, quadratic_fit=False, verbose=False):
         # distance between (x, y) and (x0, y0) along normal to curve at (x0, y0)
         dist = dot([x - x0, y - y0], [1, -dxx_dyy]) / np.sqrt(r2)
     return dist
-
 
 def project_and_bin(data, dist, oversampling, verbose=True):
 
@@ -285,14 +295,12 @@ def project_and_bin(data, dist, oversampling, verbose=True):
             #       f"interpolation between their respective nearest neighbors.")
     return esf
 
-
 def peak_width(y, rel_threshold):
     # Find width of peak in y that is above a certain fraction of the maximum value
     val = np.abs(y)
     val_threshold = rel_threshold * np.max(val)
     indices = np.where(val - val_threshold > 0.0)[0]
     return indices[-1] - indices[0]
-
 
 def filter_window(lsf, oversampling, lsf_centering_kernel_sz=9,
                     win_width_factor=1.5, lsf_threshold=0.10):
