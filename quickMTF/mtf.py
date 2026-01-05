@@ -34,9 +34,9 @@ class cSFRSetttings:
     diff_kernel: np.ndarray = field(default_factory=lambda: np.array([0.5, 0.0, -0.5]))
     diff_offset: float = 0.0
     diff_ft: int = 2  # factor used in the correction of the numerical derivation
-    sequence: int = 0
-    show_plots: int = 5
-    return_fig: bool = False
+
+    conv_kernel: int = 3
+    win_width: int = 5
 
 @dataclass
 class Centroid_Info:
@@ -101,7 +101,7 @@ class SFR:
     def calc_roi_info(self, image):
         # calculate centroids for the ROI
         diff = differentiate(image, self.sfr_settings.diff_kernel)
-        centr, win, win_width, sum_arr, sum_arr_x = centroid(diff, verbose=True)
+        centr, win, win_width, sum_arr, sum_arr_x = centroid(diff, conv_kernel = self.sfr_settings.conv_kernel, win_width = self.sfr_settings.win_width, verbose=True)
         centr = centr + self.sfr_settings.diff_offset
 
         # find edge
@@ -232,7 +232,7 @@ def plot_roi_image(image):
     plt.title("ROI image")
     plt.show()
 
-def plot_centroid_and_stats(roi_info: ROI_Info):
+def plot_centroid_and_stats(roi_info: ROI_Info, title):
 
     diff = roi_info.centroid_info.diff
     centr = roi_info.centroid_info.centr
@@ -273,6 +273,7 @@ def plot_centroid_and_stats(roi_info: ROI_Info):
     ax12.plot(centr)
     ax12.set_title("row centroid positions: sum_arr_x / sum_arr")
     
+    plt.suptitle(title)
     plt.tight_layout()
     plt.show()
 
