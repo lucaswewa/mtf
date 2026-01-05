@@ -34,7 +34,6 @@ class cSFRSetttings:
     diff_kernel: np.ndarray = field(default_factory=lambda: np.array([0.5, 0.0, -0.5]))
     diff_offset: float = 0.0
     diff_ft: int = 2  # factor used in the correction of the numerical derivation
-
     conv_kernel: int = 3
     win_width: int = 5
 
@@ -168,7 +167,7 @@ class SFR:
 
         hann_win, hann_width, idx2 = filter_window(lsf, self.sfr_settings.super_sampling)  # define window to be applied on LSF
         if hann_width > 350:  # sorting out no slant edge
-            print("wrong!")
+            print("wrong! hann_width > 350.")
 
         window_info = Window_Info(
             hann_win = hann_win,
@@ -322,7 +321,7 @@ def plot_edge_and_stats(image_for_mtf, pcoefs, slope, offset, angle, idx, patch_
     im = ax.imshow(image_for_mtf)
     plt.colorbar(im)
     if rotated:
-        # ax.plot(patch_shape[1] - centr[idx], patch_shape[0] - idx, '.k', label="centroids")
+        ax.plot(patch_shape[1] - centr[idx], patch_shape[0] - idx, '.k', label="centroids")
         print(patch_shape[0])
         print(idx)
         ax.plot(patch_shape[1] - np.polyval([slope, offset], idx), patch_shape[0] - idx, '-', label="linear fit")
@@ -335,10 +334,11 @@ def plot_edge_and_stats(image_for_mtf, pcoefs, slope, offset, angle, idx, patch_
         ax.plot(np.polyval(pcoefs, idx), idx, '--', label="quadratic fit")
         ax.set_xlim([0, patch_shape[1]])
         ax.set_ylim([0, patch_shape[0]])
-    #ax.text("{angle}")
-    # ax.set_aspect('equal', 'box')
+
+    ax.set_aspect('equal', 'box')
     ax.legend(loc='best')
     ax.invert_yaxis()
+    ax.set_title("image and edge")
 
 def plot_filter_window_and_stats(hann_win):
     fig = plt.figure(figsize=(10,4))
