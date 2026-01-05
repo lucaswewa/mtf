@@ -22,7 +22,7 @@ def centroid(arr, conv_kernel = 3, win_width = 5, verbose = False):
         centr = sum_arr_x / sum_arr
 
     if verbose:
-        return centr, win, sum_arr, sum_arr_x
+        return centr, win, win_width, sum_arr, sum_arr_x
     else:
         return centr
 
@@ -32,8 +32,8 @@ def differentiate(arr, kernel):
         out = scipy.signal.convolve2d(arr, [kernel], 'same', 'symm')
     else:
         # Input is a one-dimensional array
-        out = np.convolve(arr, kernel, 'same')
-        out[0] = 0.0
+        out = scipy.signal.convolve2d(arr.reshape(1, arr.shape[0]), [kernel], 'same', 'symm')
+        out = out.reshape(out.shape[1],)
     return out
 
 def find_edge(centr, patch_shape, rotated, angle=None, show_plots=False, verbose=False):
@@ -207,36 +207,11 @@ def invalid_value_num(arr):
     inf_num = np.sum(np.isinf(arr))
     return nan_num + inf_num
     
-def pick_valid_roi_rotation(image, diff, centr, win, sum_arr, sum_arr_x, image_rot90, diff_rot90, centr_rot90, win_rot90, sum_arr_rot90, sum_arr_x_rot90):
-    if invalid_value_num(centr_rot90) < invalid_value_num(centr):
-        (image_for_mtf, 
-         diff, 
-         centr, 
-         win, 
-         sum_arr, 
-         sum_arr_x) = (
-             image_rot90, 
-             diff_rot90, 
-             centr_rot90, 
-             win, 
-             sum_arr, 
-             sum_arr_x)
-        rotated = True
-    else:
-        (image_for_mtf, 
-         diff, 
-         centr, 
-         win, 
-         sum_arr, 
-         sum_arr_x) = (
-             image, 
-             diff, 
-             centr, 
-             win, 
-             sum_arr, 
-             sum_arr_x)    
-        rotated = False
-    return image_for_mtf, diff, centr, win, sum_arr, sum_arr_x, rotated
+def pick_valid_roi_rotation(original_roi_info, rotated_roi_info):
+    if invalid_value_num(rotated_roi_info.centroid_info.centr) < invalid_value_num(original_roi_info.centroid_info.centr):
+        return rotated_roi_info
+    else:   
+        return original_roi_info
 
 def calc_mtf(lsf, hann_win, idx, oversampling, diff_ft):
     # Calculate MTF using the LSF as input and use the supplied window function

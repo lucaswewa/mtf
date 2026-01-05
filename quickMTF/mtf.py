@@ -44,6 +44,7 @@ class Centroid_Info:
     diff: np.ndarray
     centr: np.ndarray
     win: np.ndarray
+    win_width: int
     sum_arr: np.ndarray
     sum_arr_x: np.ndarray
     rotated: bool
@@ -91,16 +92,16 @@ class MTF_Info:
     mtf_nyquist: float
 
 class SFR:
-    def __init__(self, original_roi_image: np.ndarray):
+    def __init__(self, original_roi_image: np.ndarray, sfr_settings: cSFRSetttings):
         self.original_roi_image = original_roi_image
         self.sample_image = original_roi_image
         self.sample_rotated = False
-        self.sfr_settings = cSFRSetttings()
+        self.sfr_settings = sfr_settings
 
     def calc_roi_info(self, image):
         # calculate centroids for the ROI
         diff = differentiate(image, self.sfr_settings.diff_kernel)
-        centr, win, sum_arr, sum_arr_x = centroid(diff, verbose=True)
+        centr, win, win_width, sum_arr, sum_arr_x = centroid(diff, verbose=True)
         centr = centr + self.sfr_settings.diff_offset
 
         # find edge
@@ -117,7 +118,8 @@ class SFR:
             image_for_mtf=image, 
             diff=diff, 
             centr=centr, 
-            win=win, 
+            win=win,
+            win_width=win_width,
             sum_arr=sum_arr, 
             sum_arr_x=sum_arr_x, 
             rotated=False)
@@ -147,42 +149,42 @@ class SFR:
         image_rot90 = self.sample_image.T[:, ::-1]  # rotate by transposing and mirroring
         self.rotated_roi_info = self.calc_roi_info(image_rot90)
 
-        image_for_mtf, diff_for_mtf, centr_for_mtf, win_for_mtf, sum_arr_for_mtf, sum_arr_x_for_mtf, rotated_for_mtf = pick_valid_roi_rotation(
-            self.original_roi_info.image, self.original_roi_info.centroid_info.diff, self.original_roi_info.centroid_info.centr, self.original_roi_info.centroid_info.win, self.original_roi_info.centroid_info.sum_arr, self.original_roi_info.centroid_info.sum_arr_x,
-            self.rotated_roi_info.image, self.rotated_roi_info.centroid_info.diff, self.rotated_roi_info.centroid_info.centr, self.rotated_roi_info.centroid_info.win, self.rotated_roi_info.centroid_info.sum_arr, self.rotated_roi_info.centroid_info.sum_arr_x)
-
-        self.roi_info = self.original_roi_info if not rotated_for_mtf else self.rotated_roi_info
+        self.roi_info = pick_valid_roi_rotation(
+            self.original_roi_info,
+            self.rotated_roi_info)
 
     def calculate_esf(self):
-        image_for_mtf = self.roi_info.centroid_info.image_for_mtf
-        dist = self.roi_info.edge_info.dist
+        esf = project_and_bin(
+            self.roi_info.centroid_info.image_for_mtf, 
+            self.roi_info.edge_info.dist, 
+            self.sfr_settings.super_sampling)  # edge spread function
 
-        esf = project_and_bin(image_for_mtf, dist, self.sfr_settings.super_sampling)  # edge spread function
-
-        self.esf_info = ESF_Info(esf=esf, super_sampling=self.sfr_settings.super_sampling)
+        self.esf_info = ESF_Info(
+            esf=esf, 
+            super_sampling=self.sfr_settings.super_sampling)
 
     def calculate_lsf(self):
-        esf = self.esf_info.esf
-        diff_kernel = self.sfr_settings.diff_kernel
-
-        lsf = differentiate(esf, diff_kernel)
+        lsf = differentiate(self.esf_info.esf, self.sfr_settings.diff_kernel)
 
         hann_win, hann_width, idx2 = filter_window(lsf, self.sfr_settings.super_sampling)  # define window to be applied on LSF
-        if hann_width >350:  # sorting out no slant edge
+        if hann_width > 350:  # sorting out no slant edge
             print("wrong!")
 
-        window_info = Window_Info(hann_win, hann_width, idx2)
-        self.lsf_info = LSF_Info(lsf=lsf, window_info=window_info)
+        window_info = Window_Info(
+            hann_win = hann_win,
+            hann_width = hann_width,
+            idx2 = idx2)
+        self.lsf_info = LSF_Info(
+            lsf = lsf, 
+            window_info = window_info)
 
     def calculate_mtf(self):
-        lsf = self.lsf_info.lsf
-        hann_win = self.lsf_info.window_info.hann_win
-        idx2 = self.lsf_info.window_info.idx2
-        angle = self.roi_info.edge_info.angle
-        rotated = self.roi_info.rotated
-        offset = self.roi_info.edge_info.offset
-        mtf_result = calc_mtf(lsf, hann_win, idx2, self.sfr_settings.super_sampling, self.sfr_settings.diff_ft)
-
+        mtf_result = calc_mtf(
+            self.lsf_info.lsf, 
+            self.lsf_info.window_info.hann_win, 
+            self.lsf_info.window_info.idx2, 
+            self.sfr_settings.super_sampling, 
+            self.sfr_settings.diff_ft)
 
         filtered_first_elements = mtf_result[:, 1]
         absolute_diff = np.abs(filtered_first_elements - self.sfr_settings.mtf_index)
@@ -196,15 +198,15 @@ class SFR:
         self.mtf_info = MTF_Info(
             mtf_result=mtf_result, 
             cp_filter=round(cp_filter, 2), 
-            angle=round(angle, 2), 
+            angle=round(self.roi_info.edge_info.angle, 2), 
             mtf_nyquist=round(mtf_nyquist, 2)
             )
 
-        angle_cw = rotated * 90 - angle  # angle clockwise from vertical axis
+        angle_cw = self.roi_info.rotated * 90 - self.roi_info.edge_info.angle  # angle clockwise from vertical axis
         self.status_info = {
-            "rotated": rotated,
+            "rotated": self.roi_info.rotated,
             "angle": angle_cw,
-            "offset": offset
+            "offset": self.roi_info.edge_info.offset
         }
 
 
@@ -235,41 +237,41 @@ def plot_centroid_and_stats(roi_info: ROI_Info):
     diff = roi_info.centroid_info.diff
     centr = roi_info.centroid_info.centr
     win = roi_info.centroid_info.win
+    win_width = roi_info.centroid_info.win_width
     sum_arr = roi_info.centroid_info.sum_arr
     sum_arr_x = roi_info.centroid_info.sum_arr_x
 
     fig = plt.figure(figsize=(10, 5))
 
     ax00 = fig.add_subplot(2, 3, 1)
-    ax00.set_title("row diff map")
-    im00 = ax00.imshow(diff, cmap="gray")
+    im00 = ax00.imshow(diff, cmap="viridis", interpolation='nearest')
     fig.colorbar(im00)
+    ax00.set_title("row diff heatmap")
 
     ax01 = fig.add_subplot(2, 3, 2, projection="3d")
     X = np.arange(0, diff.shape[1])
     Y = np.arange(0, diff.shape[0])
     X, Y = np.meshgrid(X, Y)
     Z = diff
-    surf = ax01.plot_surface(X, Y, Z,
-                           linewidth=0, antialiased=False)
+    surf = ax01.plot_surface(X, Y, Z, linewidth=0, antialiased=False)
     ax01.set_title("row diff 3d map")
 
     ax02 = fig.add_subplot(2, 3, 3)
-    ax02.set_title("row centroid positions")
-    ax02.plot(centr)
+    im02 = ax02.imshow(win)
+    fig.colorbar(im02)
+    ax02.set_title(f"win map - win_width:{win_width}")
 
     ax10 = fig.add_subplot(2, 3, 4)
-    im10 = ax10.imshow(win)
-    ax10.set_title("win map")
-    fig.colorbar(im10)
+    ax10.plot(sum_arr)
+    ax10.set_title("sum_arr: sum on win_width")
 
     ax11 = fig.add_subplot(2, 3, 5)
-    ax11.plot(sum_arr)
-    ax11.set_title("sum array")
+    ax11.plot(sum_arr_x)
+    ax11.set_title("sum_arr_x: sum on row")
 
     ax12 = fig.add_subplot(2, 3, 6)
-    ax12.plot(sum_arr_x)
-    ax12.set_title("sum array x")
+    ax12.plot(centr)
+    ax12.set_title("row centroid positions: sum_arr_x / sum_arr")
     
     plt.tight_layout()
     plt.show()
